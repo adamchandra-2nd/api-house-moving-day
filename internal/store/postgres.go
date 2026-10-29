@@ -38,10 +38,13 @@ func OpenPostgres(ctx context.Context, dsn string) (*Postgres, error) {
 	cfg.MaxConnIdleTime = 5 * time.Minute
 	cfg.MaxConnLifetime = time.Hour
 
-	// Supabase's transaction pooler (port 6543) does not support prepared
-	// statement caching; describing each statement instead is what makes the
-	// same code work on both the pooled and the direct port.
-	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeDescribeExec
+	// Supabase's transaction pooler (port 6543) hands each message to whichever
+	// backend is free, so even describe-then-execute breaks: under concurrent
+	// requests the describe and the bind land on different backends and fail
+	// with "bind message has N result formats but query has M columns". The
+	// simple protocol sends one self-contained message per query, which works
+	// on the pooled and the direct port alike.
+	cfg.ConnConfig.DefaultQueryExecMode = pgx.QueryExecModeSimpleProtocol
 
 	pool, err := pgxpool.NewWithConfig(ctx, cfg)
 	if err != nil {
@@ -72,7 +75,7 @@ func (p *Postgres) Close() error { p.pool.Close(); return nil }
 //
 // Since that string is what the dashboard hands people, pasting it in should
 // work. Dropping these is safe: pgx already does the right thing for a
-// transaction-mode pooler via DefaultQueryExecMode below, and the pool size is
+// transaction-mode pooler via DefaultQueryExecMode above, and the pool size is
 // set here rather than in the URL.
 var clientOnlyParams = []string{"pgbouncer", "connection_limit", "pool_timeout", "schema", "prepared_statements"}
 
@@ -155,7 +158,7 @@ func (p *Postgres) PresentGuests(ctx context.Context) ([]model.Guest, error) {
 	}
 	defer rows.Close()
 
-	var out []model.Guest
+	out := []model.Guest{} // never nil: an empty list is [] on the wire, not null
 	for rows.Next() {
 		var g model.Guest
 		if err := rows.Scan(&g.ID, &g.Name, &g.Role, &g.Question, &g.Outfit, &g.Code); err != nil {
@@ -173,7 +176,7 @@ func (p *Postgres) AdminGuests(ctx context.Context) ([]model.AdminGuest, error) 
 	}
 	defer rows.Close()
 
-	var out []model.AdminGuest
+	out := []model.AdminGuest{}
 	for rows.Next() {
 		g, err := scanAdminGuest(rows)
 		if err != nil {
@@ -331,7 +334,7 @@ func (p *Postgres) Sessions(ctx context.Context) ([]model.Session, error) {
 	}
 	defer rows.Close()
 
-	var out []model.Session
+	out := []model.Session{}
 	for rows.Next() {
 		var s model.Session
 		if err := rows.Scan(&s.ID, &s.Title, &s.RoomID, &s.Start, &s.End, &s.PIC, &s.SpeakerID, &s.QnA); err != nil {
@@ -386,7 +389,7 @@ func (p *Postgres) Questions(ctx context.Context, eventID string) ([]model.Quest
 	}
 	defer rows.Close()
 
-	var out []model.Question
+	out := []model.Question{}
 	for rows.Next() {
 		var q model.Question
 		if err := rows.Scan(&q.ID, &q.EventID, &q.Text, &q.Author, &q.AuthorGuestID, &q.Status, &q.At, &q.Edited); err != nil {
@@ -505,7 +508,7 @@ func (p *Postgres) Cards(ctx context.Context, ownerID string) ([]model.Card, err
 	}
 	defer rows.Close()
 
-	var out []model.Card
+	out := []model.Card{}
 	for rows.Next() {
 		var c model.Card
 		if err := rows.Scan(&c.GuestID, &c.Note); err != nil {
@@ -560,6 +563,24 @@ func (p *Postgres) EventFeedback(ctx context.Context) (map[string][]model.EventF
 	return out, wrap(rows.Err())
 }
 
+func (p *Postgres) RatedEvents(ctx context.Context, guestID string) ([]string, error) {
+	rows, err := p.pool.Query(ctx, `select event_id from event_feedback where guest_id = $1`, guestID)
+	if err != nil {
+		return nil, wrap(err)
+	}
+	defer rows.Close()
+
+	out := []string{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return nil, wrap(err)
+		}
+		out = append(out, id)
+	}
+	return out, wrap(rows.Err())
+}
+
 func (p *Postgres) FinalFeedback(ctx context.Context) ([]model.FinalFeedback, error) {
 	rows, err := p.pool.Query(ctx, `
 		select rating, note, moods, at_min from final_feedback order by at_min`)
@@ -568,7 +589,7 @@ func (p *Postgres) FinalFeedback(ctx context.Context) ([]model.FinalFeedback, er
 	}
 	defer rows.Close()
 
-	var out []model.FinalFeedback
+	out := []model.FinalFeedback{}
 	for rows.Next() {
 		var f model.FinalFeedback
 		if err := rows.Scan(&f.Rating, &f.Note, &f.Moods, &f.At); err != nil {
@@ -583,17 +604,17 @@ func (p *Postgres) FinalFeedback(ctx context.Context) ([]model.FinalFeedback, er
 
 func (p *Postgres) Announcements(ctx context.Context) ([]model.Announcement, error) {
 	rows, err := p.pool.Query(ctx, `
-		select id, title, body, room_id, at_min, recipients, read_count, failed
+		select id, title, body, room_id, at_min, recipients, read_count, failed, source
 		from announcements order by at_min, created_at`)
 	if err != nil {
 		return nil, wrap(err)
 	}
 	defer rows.Close()
 
-	var out []model.Announcement
+	out := []model.Announcement{}
 	for rows.Next() {
 		var a model.Announcement
-		if err := rows.Scan(&a.ID, &a.Title, &a.Body, &a.RoomID, &a.At, &a.Recipients, &a.Read, &a.Failed); err != nil {
+		if err := rows.Scan(&a.ID, &a.Title, &a.Body, &a.RoomID, &a.At, &a.Recipients, &a.Read, &a.Failed, &a.Source); err != nil {
 			return nil, wrap(err)
 		}
 		out = append(out, a)
@@ -607,35 +628,127 @@ func (p *Postgres) AddAnnouncement(ctx context.Context, a model.Announcement) (m
 	}
 	// Recipients defaults to everybody actually in the building, counted here
 	// rather than passed in, so the number cannot be wrong.
+	if a.Source == "" {
+		a.Source = "panitia"
+	}
 	err := p.pool.QueryRow(ctx, `
-		insert into announcements (id, title, body, room_id, at_min, recipients)
+		insert into announcements (id, title, body, room_id, at_min, recipients, source)
 		values ($1, $2, $3, $4, $5,
 			case when $6 > 0 then $6
-			     else (select count(*) from guests where check_in_min is not null) end)
-		returning id, title, body, room_id, at_min, recipients, read_count, failed`,
-		a.ID, a.Title, a.Body, a.RoomID, a.At, a.Recipients,
-	).Scan(&a.ID, &a.Title, &a.Body, &a.RoomID, &a.At, &a.Recipients, &a.Read, &a.Failed)
+			     else (select count(*) from guests where check_in_min is not null) end,
+			$7)
+		returning id, title, body, room_id, at_min, recipients, read_count, failed, source`,
+		a.ID, a.Title, a.Body, a.RoomID, a.At, a.Recipients, a.Source,
+	).Scan(&a.ID, &a.Title, &a.Body, &a.RoomID, &a.At, &a.Recipients, &a.Read, &a.Failed, &a.Source)
+	return a, wrap(err)
+}
+
+func (p *Postgres) ResendAnnouncement(ctx context.Context, id string, minute int) (model.Announcement, error) {
+	var a model.Announcement
+	// Recipients is recounted: a resend reaches everybody here now, including
+	// whoever arrived after the first send.
+	err := p.pool.QueryRow(ctx, `
+		update announcements set at_min = $2, failed = false,
+			recipients = (select count(*) from guests where check_in_min is not null)
+		where id = $1
+		returning id, title, body, room_id, at_min, recipients, read_count, failed, source`,
+		id, minute,
+	).Scan(&a.ID, &a.Title, &a.Body, &a.RoomID, &a.At, &a.Recipients, &a.Read, &a.Failed, &a.Source)
 	return a, wrap(err)
 }
 
 // ---- people ----
 
 func (p *Postgres) People(ctx context.Context) ([]model.Person, error) {
-	rows, err := p.pool.Query(ctx, `select id, name, role, title, phone from people order by role, name`)
+	rows, err := p.pool.Query(ctx, `
+		select id, name, role, title, phone,
+			case when revoked then 'dicabut'
+			     when last_login_at is not null then 'masuk'
+			     when invited_at is not null then 'terkirim'
+			     else 'belum' end
+		from people order by role, name`)
 	if err != nil {
 		return nil, wrap(err)
 	}
 	defer rows.Close()
 
-	var out []model.Person
+	out := []model.Person{}
 	for rows.Next() {
 		var pr model.Person
-		if err := rows.Scan(&pr.ID, &pr.Name, &pr.Role, &pr.Title, &pr.Phone); err != nil {
+		if err := rows.Scan(&pr.ID, &pr.Name, &pr.Role, &pr.Title, &pr.Phone, &pr.Access); err != nil {
 			return nil, wrap(err)
 		}
 		out = append(out, pr)
 	}
 	return out, wrap(rows.Err())
+}
+
+func (p *Postgres) SavePerson(ctx context.Context, pr model.Person) (model.Person, error) {
+	if pr.ID == "" {
+		pr.ID = newID("p")
+		pr.Access = "belum"
+		_, err := p.pool.Exec(ctx, `
+			insert into people (id, name, role, title, phone) values ($1, $2, $3, $4, $5)`,
+			pr.ID, pr.Name, pr.Role, pr.Title, pr.Phone)
+		return pr, wrap(err)
+	}
+	err := p.pool.QueryRow(ctx, `
+		update people set name = $2, role = $3, title = $4, phone = $5 where id = $1
+		returning case when revoked then 'dicabut'
+		               when last_login_at is not null then 'masuk'
+		               when invited_at is not null then 'terkirim'
+		               else 'belum' end`,
+		pr.ID, pr.Name, pr.Role, pr.Title, pr.Phone).Scan(&pr.Access)
+	return pr, wrap(err)
+}
+
+// personExec runs an update against one person and reports a missing one.
+func (p *Postgres) personExec(ctx context.Context, sql string, args ...any) error {
+	tag, err := p.pool.Exec(ctx, sql, args...)
+	if err != nil {
+		return wrap(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (p *Postgres) MarkPersonInvited(ctx context.Context, id string) error {
+	return p.personExec(ctx, `update people set invited_at = now() where id = $1`, id)
+}
+
+func (p *Postgres) MarkPersonLogin(ctx context.Context, id string) error {
+	return p.personExec(ctx, `update people set last_login_at = now() where id = $1`, id)
+}
+
+func (p *Postgres) SetPersonRevoked(ctx context.Context, id string, revoked bool) error {
+	// Restoring a link also forgets the old sign-in, so the page reads
+	// "terkirim" again until they actually come back in.
+	return p.personExec(ctx, `
+		update people set revoked = $2,
+			last_login_at = case when $2 then last_login_at else null end
+		where id = $1`, id, revoked)
+}
+
+func (p *Postgres) DeletePerson(ctx context.Context, id string) error {
+	tx, err := p.pool.Begin(ctx)
+	if err != nil {
+		return wrap(err)
+	}
+	defer tx.Rollback(ctx) //nolint:errcheck // a no-op after Commit
+
+	tag, err := tx.Exec(ctx, `delete from people where id = $1`, id)
+	if err != nil {
+		return wrap(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	if _, err := tx.Exec(ctx, `update sessions set speaker_id = '' where speaker_id = $1`, id); err != nil {
+		return wrap(err)
+	}
+	return wrap(tx.Commit(ctx))
 }
 
 // ---- stage ----
@@ -657,10 +770,13 @@ func (p *Postgres) SaveStageState(ctx context.Context, rev int64, state json.Raw
 	// The rev in the where clause is the lock. rev < 0 means "overwrite
 	// whatever is there", which is what a review case seeding the stage does
 	// on purpose.
+	//
+	// The state goes as a string, not []byte: under the simple protocol
+	// []byte is sent as a bytea literal, which jsonb refuses.
 	err := p.pool.QueryRow(ctx, `
-		update stage_state set rev = rev + 1, state = $2, updated_at = now()
+		update stage_state set rev = rev + 1, state = $2::jsonb, updated_at = now()
 		where id = 1 and ($1 < 0 or rev = $1)
-		returning rev`, rev, []byte(state)).Scan(&next)
+		returning rev`, rev, string(state)).Scan(&next)
 
 	if errors.Is(wrap(err), ErrNotFound) {
 		current, _, _ := p.StageState(ctx)
@@ -825,7 +941,8 @@ func (p *Postgres) SeedIfEmpty(ctx context.Context) (bool, error) {
 
 const settingsCols = `
 	event_name, event_date, place_name, place_address,
-	door_code, panitia_pin, countdown, final_feedback_min, codes_changed_min`
+	door_code, panitia_pin, countdown, final_feedback_min, codes_changed_min,
+	invite_template, contact_name, contact_phone`
 
 func (p *Postgres) Settings(ctx context.Context) (model.Settings, error) {
 	var s model.Settings
@@ -833,6 +950,7 @@ func (p *Postgres) Settings(ctx context.Context) (model.Settings, error) {
 	err := p.pool.QueryRow(ctx, `select`+settingsCols+` from settings where id = 1`).Scan(
 		&s.EventName, &day, &s.Place.Name, &s.Place.Address,
 		&s.DoorCode, &s.PanitiaPIN, &s.Countdown, &s.FinalFeedbackAt, &s.CodesChangedAt,
+		&s.InviteTemplate, &s.Contact.Name, &s.Contact.Phone,
 	)
 	if err != nil {
 		return model.Settings{}, wrap(err)
@@ -849,10 +967,12 @@ func (p *Postgres) SaveSettings(ctx context.Context, s model.Settings) error {
 			event_name = $1, event_date = $2, place_name = $3, place_address = $4,
 			door_code = $5, panitia_pin = $6, countdown = $7,
 			final_feedback_min = $8, codes_changed_min = $9,
+			invite_template = $10, contact_name = $11, contact_phone = $12,
 			updated_at = now()
 		where id = 1`,
 		s.EventName, s.Date, s.Place.Name, s.Place.Address,
-		s.DoorCode, s.PanitiaPIN, s.Countdown, s.FinalFeedbackAt, s.CodesChangedAt)
+		s.DoorCode, s.PanitiaPIN, s.Countdown, s.FinalFeedbackAt, s.CodesChangedAt,
+		s.InviteTemplate, s.Contact.Name, s.Contact.Phone)
 }
 
 // ---- the shared gallery ----
@@ -872,7 +992,7 @@ func (p *Postgres) Photos(ctx context.Context) ([]model.Photo, error) {
 	}
 	defer rows.Close()
 
-	var out []model.Photo
+	out := []model.Photo{}
 	for rows.Next() {
 		ph, err := scanPhoto(rows)
 		if err != nil {

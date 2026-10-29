@@ -81,6 +81,19 @@ type Settings struct {
 	// Rundown minutes, like everything else on the clock in this app.
 	FinalFeedbackAt int `json:"finalFeedbackAt"`
 	CodesChangedAt  int `json:"codesChangedAt"`
+
+	// InviteTemplate is the WhatsApp invitation, with {nama} and {link}.
+	// Empty means the built-in one.
+	InviteTemplate string `json:"inviteTemplate"`
+	// Contact is who guests, the MC and speakers call for help.
+	Contact Contact `json:"contact"`
+}
+
+// Contact is the committee member on call. Both empty means nobody is set,
+// and the screens hide the button rather than dialling nobody.
+type Contact struct {
+	Name  string `json:"name"`
+	Phone string `json:"phone"`
 }
 
 // Outfit is what a guest dressed their character in: one label per category,
@@ -222,6 +235,10 @@ type Person struct {
 	Role  string `json:"role"` // "mc" | "pembicara"
 	Title string `json:"title"`
 	Phone string `json:"phone"`
+	// Access is where their personal link stands, for the Pengisi page:
+	// "belum" (not sent), "terkirim", "masuk" (has signed in) or "dicabut".
+	// Derived by the store; ignored on writes.
+	Access string `json:"access"`
 }
 
 // Question is one question sent to the stage.
@@ -252,6 +269,8 @@ type Announcement struct {
 	Recipients int     `json:"recipients"`
 	Read       int     `json:"read"`
 	Failed     bool    `json:"failed,omitempty"`
+	// Source is "panitia" or "mc": who announced it.
+	Source string `json:"source"`
 }
 
 // Card is a kenalan card one guest collected from another.
@@ -297,6 +316,13 @@ type Invite struct {
 	Code string `json:"code"`
 	// Cards is how many they have collected so far.
 	Cards int `json:"cards"`
+	// RewardClaimed and FinalFeedback are what the phone used to remember on
+	// its own; from the server they survive a second phone or cleared storage.
+	RewardClaimed bool `json:"rewardClaimed"`
+	FinalFeedback bool `json:"finalFeedback"`
+	// RatedEvents is the sessions this guest already rated, so the "beri
+	// rating" prompt does not come back on a second phone.
+	RatedEvents []string `json:"ratedEvents"`
 	// Outfit is the character they already built, so a guest who reopens their
 	// link on a different phone gets their own character back rather than an
 	// empty customisation screen. This is the whole reason it is stored
@@ -320,6 +346,9 @@ type EventInfo struct {
 	DateLabel string `json:"dateLabel"`
 	Place     string `json:"place"`
 	StartsAt  string `json:"startsAt"`
+	// Contact is public on purpose: it is the number on the "Hubungi
+	// panitia" button, which guests see anyway.
+	Contact Contact `json:"contact"`
 }
 
 // Dashboard is the admin landing aggregate, computed server-side so the

@@ -61,6 +61,11 @@ type Config struct {
 	// enters its own guest list and every number on the dashboard is real
 	// from the first one.
 	Seed bool
+
+	// Serverless is set by the Vercel entry point, never from the
+	// environment. A function cannot hold the stage stream open, so the
+	// stream answers "not here" at once and the apps poll instead.
+	Serverless bool
 }
 
 // Load reads .env (if present) and then the real environment, which wins.

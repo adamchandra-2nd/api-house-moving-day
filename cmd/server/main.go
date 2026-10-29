@@ -18,10 +18,8 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/adamchandra-2nd/api-house-moving-day/internal/cache"
+	"github.com/adamchandra-2nd/api-house-moving-day/internal/app"
 	"github.com/adamchandra-2nd/api-house-moving-day/internal/config"
-	"github.com/adamchandra-2nd/api-house-moving-day/internal/httpapi"
-	"github.com/adamchandra-2nd/api-house-moving-day/internal/store"
 	"github.com/adamchandra-2nd/api-house-moving-day/internal/token"
 )
 
@@ -50,21 +48,15 @@ func run(log *slog.Logger) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 	defer cancel()
 
-	ch, err := cache.Open(ctx, cfg.RedisURL)
+	a, err := app.Open(ctx, cfg, log)
 	if err != nil {
 		return err
 	}
-	defer ch.Close()
-
-	st, err := openStore(ctx, cfg, log)
-	if err != nil {
-		return err
-	}
-	defer st.Close()
+	defer a.Close()
 
 	srv := &http.Server{
 		Addr:    cfg.Addr,
-		Handler: httpapi.New(cfg, st, ch, log).Routes(),
+		Handler: a.Handler,
 
 		ReadHeaderTimeout: 10 * time.Second,
 		ReadTimeout:       30 * time.Second,
@@ -76,8 +68,8 @@ func run(log *slog.Logger) error {
 
 	log.Info("listening",
 		"addr", cfg.Addr,
-		"store", st.Kind(),
-		"cache", ch.Kind(),
+		"store", a.Store.Kind(),
+		"cache", a.Cache.Kind(),
 		"app", cfg.AppBaseURL,
 		"invite_links", cfg.AppBaseURL+"/u/<token>")
 	if cfg.InMemory() {
@@ -106,32 +98,4 @@ func run(log *slog.Logger) error {
 		defer cancel()
 		return srv.Shutdown(down)
 	}
-}
-
-// openStore picks the backend and, on a brand new Supabase project, loads the
-// sample data so the API behaves the same way it does in memory.
-func openStore(ctx context.Context, cfg *config.Config, log *slog.Logger) (store.Store, error) {
-	if cfg.InMemory() {
-		return store.NewMemory(cfg.Seed)
-	}
-
-	pg, err := store.OpenPostgres(ctx, cfg.DatabaseURL)
-	if err != nil {
-		return nil, err
-	}
-	if !cfg.Seed {
-		log.Info("SEED=false: leaving the database as it is, sample data included if it is already there")
-		return pg, nil
-	}
-	seeded, err := pg.SeedIfEmpty(ctx)
-	if err != nil {
-		pg.Close()
-		// A seed that half-applied would leave a confusing database, so the
-		// transaction rolls back and this is fatal rather than a warning.
-		return nil, err
-	}
-	if seeded {
-		log.Info("seeded an empty database with the sample guests, rundown and questions")
-	}
-	return pg, nil
 }

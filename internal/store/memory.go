@@ -654,6 +654,22 @@ func (m *Memory) EventFeedback(ctx context.Context) (map[string][]model.EventFee
 	return out, nil
 }
 
+func (m *Memory) RatedEvents(ctx context.Context, guestID string) ([]string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+
+	out := []string{}
+	for id, list := range m.eventFeedback {
+		for _, f := range list {
+			if f.GuestID == guestID {
+				out = append(out, id)
+				break
+			}
+		}
+	}
+	return out, nil
+}
+
 func (m *Memory) FinalFeedback(ctx context.Context) ([]model.FinalFeedback, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -683,8 +699,30 @@ func (m *Memory) AddAnnouncement(ctx context.Context, a model.Announcement) (mod
 			}
 		}
 	}
+	if a.Source == "" {
+		a.Source = "panitia"
+	}
 	m.announcements = append(m.announcements, a)
 	return a, nil
+}
+
+func (m *Memory) ResendAnnouncement(ctx context.Context, id string, minute int) (model.Announcement, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for i := range m.announcements {
+		if m.announcements[i].ID == id {
+			a := &m.announcements[i]
+			a.At, a.Failed, a.Recipients = minute, false, 0
+			for _, g := range m.guests {
+				if g.CheckIn != nil {
+					a.Recipients++
+				}
+			}
+			return *a, nil
+		}
+	}
+	return model.Announcement{}, ErrNotFound
 }
 
 // ---- people ----
@@ -692,7 +730,94 @@ func (m *Memory) AddAnnouncement(ctx context.Context, a model.Announcement) (mod
 func (m *Memory) People(ctx context.Context) ([]model.Person, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
-	return append([]model.Person(nil), m.people...), nil
+	out := append([]model.Person(nil), m.people...)
+	for i := range out {
+		if out[i].Access == "" {
+			out[i].Access = "belum"
+		}
+	}
+	return out, nil
+}
+
+// setAccess moves one person's link status. next decides from the current
+// status, so "terkirim" never overwrites "masuk".
+func (m *Memory) setAccess(id string, next func(cur string) string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for i := range m.people {
+		if m.people[i].ID == id {
+			m.people[i].Access = next(m.people[i].Access)
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+
+func (m *Memory) MarkPersonInvited(ctx context.Context, id string) error {
+	return m.setAccess(id, func(cur string) string {
+		if cur == "" || cur == "belum" {
+			return "terkirim"
+		}
+		return cur
+	})
+}
+
+func (m *Memory) MarkPersonLogin(ctx context.Context, id string) error {
+	return m.setAccess(id, func(cur string) string {
+		if cur == "dicabut" {
+			return cur
+		}
+		return "masuk"
+	})
+}
+
+func (m *Memory) SetPersonRevoked(ctx context.Context, id string, revoked bool) error {
+	return m.setAccess(id, func(cur string) string {
+		if revoked {
+			return "dicabut"
+		}
+		return "terkirim"
+	})
+}
+
+func (m *Memory) SavePerson(ctx context.Context, p model.Person) (model.Person, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	if p.ID == "" {
+		p.ID = newID("p")
+		p.Access = "belum"
+		m.people = append(m.people, p)
+		return p, nil
+	}
+	for i := range m.people {
+		if m.people[i].ID == p.ID {
+			// Access is the store's to derive, never the caller's to set.
+			p.Access = m.people[i].Access
+			m.people[i] = p
+			return p, nil
+		}
+	}
+	return p, ErrNotFound
+}
+
+func (m *Memory) DeletePerson(ctx context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+
+	for i := range m.people {
+		if m.people[i].ID == id {
+			m.people = append(m.people[:i], m.people[i+1:]...)
+			for j := range m.sessions {
+				if m.sessions[j].SpeakerID == id {
+					m.sessions[j].SpeakerID = ""
+				}
+			}
+			return nil
+		}
+	}
+	return ErrNotFound
 }
 
 // ---- stage ----

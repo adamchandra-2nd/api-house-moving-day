@@ -26,13 +26,11 @@ type adminLoginBody struct {
 	Email string `json:"email"`
 }
 
+// adminLoginResult never carries the PIN. There is no mail service, so the
+// committee gets ADMIN_PIN from whoever runs the server; returning it here
+// would let anyone who knows the address sign in.
 type adminLoginResult struct {
 	Sent bool `json:"sent"`
-	// PIN is returned only because this is a prototype with no mail service
-	// wired up. Once email works this field goes away and the committee reads
-	// the PIN from their inbox -- returning it over HTTP defeats the point of
-	// a second factor.
-	PIN string `json:"pin,omitempty"`
 }
 
 func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
@@ -54,7 +52,7 @@ func (s *Server) handleAdminLogin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	s.log.Info("admin PIN requested", "email", body.Email)
-	s.writeJSON(w, http.StatusOK, adminLoginResult{Sent: true, PIN: s.cfg.AdminPIN})
+	s.writeJSON(w, http.StatusOK, adminLoginResult{Sent: true})
 }
 
 type adminVerifyBody struct {
@@ -196,6 +194,11 @@ func (s *Server) handleSendInvites(w http.ResponseWriter, r *http.Request) {
 		byID[g.ID] = g
 	}
 
+	template := waTemplate
+	if set, err := s.store.Settings(r.Context()); err == nil && strings.TrimSpace(set.InviteTemplate) != "" {
+		template = set.InviteTemplate
+	}
+
 	plans := make([]invitePlan, 0, len(body.GuestIDs))
 	for _, id := range body.GuestIDs {
 		g, ok := byID[id]
@@ -204,7 +207,7 @@ func (s *Server) handleSendInvites(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		link := s.inviteURL(g.InviteToken, g.Name)
-		msg := strings.NewReplacer("{nama}", g.Name, "{link}", link).Replace(waTemplate)
+		msg := strings.NewReplacer("{nama}", g.Name, "{link}", link).Replace(template)
 		plans = append(plans, invitePlan{
 			GuestID: g.ID,
 			Name:    g.Name,
@@ -270,6 +273,10 @@ type announcementBody struct {
 }
 
 func (s *Server) handleAddAnnouncement(w http.ResponseWriter, r *http.Request) {
+	s.addAnnouncement(w, r, "panitia")
+}
+
+func (s *Server) addAnnouncement(w http.ResponseWriter, r *http.Request, source string) {
 	var body announcementBody
 	if err := decode(w, r, &body); err != nil {
 		s.badRequest(w, err.Error())
@@ -283,7 +290,7 @@ func (s *Server) handleAddAnnouncement(w http.ResponseWriter, r *http.Request) {
 	}
 
 	a, err := s.store.AddAnnouncement(r.Context(), model.Announcement{
-		Title: body.Title, Body: body.Body, RoomID: body.RoomID, At: rundownMinute(time.Now()),
+		Title: body.Title, Body: body.Body, RoomID: body.RoomID, At: rundownMinute(time.Now()), Source: source,
 	})
 	if err != nil {
 		s.fail(w, r, err)
@@ -293,6 +300,25 @@ func (s *Server) handleAddAnnouncement(w http.ResponseWriter, r *http.Request) {
 	// The MC's phone shows committee announcements too.
 	s.publishStage(r.Context(), stageEvent{Kind: "announcement"})
 	s.writeJSON(w, http.StatusCreated, a)
+}
+
+// handleStageAnnouncement is the MC announcing from the stage. It lands in
+// the same table as the committee's, so guests see both in one place.
+func (s *Server) handleStageAnnouncement(w http.ResponseWriter, r *http.Request) {
+	s.addAnnouncement(w, r, "mc")
+}
+
+// handleResendAnnouncement moves an announcement to now, which guests' phones
+// read as new and show again.
+func (s *Server) handleResendAnnouncement(w http.ResponseWriter, r *http.Request) {
+	a, err := s.store.ResendAnnouncement(r.Context(), r.PathValue("id"), rundownMinute(time.Now()))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.invalidate(r.Context(), keyAnnouncements)
+	s.publishStage(r.Context(), stageEvent{Kind: "announcement"})
+	s.writeJSON(w, http.StatusOK, a)
 }
 
 // handleSaveRundown replaces the rundown with what the committee just edited.
