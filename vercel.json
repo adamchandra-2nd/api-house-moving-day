@@ -1,0 +1,8 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "regions": ["dub1"],
+  "functions": {
+    "api/index.go": { "maxDuration": 30 }
+  },
+  "rewrites": [{ "source": "/(.*)", "destination": "/api/index" }]
+}

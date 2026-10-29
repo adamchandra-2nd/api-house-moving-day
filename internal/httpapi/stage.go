@@ -220,6 +220,12 @@ func (s *Server) handleQuestionStatus(w http.ResponseWriter, r *http.Request) {
 // same events. The stream opens with the current state so a client that just
 // reconnected is correct immediately, without a separate fetch.
 func (s *Server) handleStageStream(w http.ResponseWriter, r *http.Request) {
+	if s.cfg.Serverless {
+		// 503 rather than a held-open connection: EventSource gives up on a
+		// non-200 instead of retrying, and the apps fall back to polling.
+		s.writeJSON(w, http.StatusServiceUnavailable, errBody{Error: "stream tidak tersedia di server ini", Code: "no_stream"})
+		return
+	}
 	flusher, ok := w.(http.Flusher)
 	if !ok {
 		// No streaming support behind this writer; better to say so than to
