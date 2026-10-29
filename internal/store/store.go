@@ -112,6 +112,8 @@ type Store interface {
 	AddEventFeedback(ctx context.Context, guestID string, f model.EventFeedback) error
 	AddFinalFeedback(ctx context.Context, guestID string, f model.FinalFeedback) error
 	EventFeedback(ctx context.Context) (map[string][]model.EventFeedback, error)
+	// RatedEvents is the session ids one guest has rated.
+	RatedEvents(ctx context.Context, guestID string) ([]string, error)
 	FinalFeedback(ctx context.Context) ([]model.FinalFeedback, error)
 
 	// ---- announcements ----
@@ -119,9 +121,31 @@ type Store interface {
 	Announcements(ctx context.Context) ([]model.Announcement, error)
 	AddAnnouncement(ctx context.Context, a model.Announcement) (model.Announcement, error)
 
+	// ResendAnnouncement moves an announcement to minute, which is what makes
+	// guests' phones show it again as new.
+	ResendAnnouncement(ctx context.Context, id string, minute int) (model.Announcement, error)
+
 	// ---- people on stage ----
 
 	People(ctx context.Context) ([]model.Person, error)
+
+	// SavePerson adds a person when ID is empty -- minting a random id, since
+	// the id is what the personal stage link carries -- and replaces one
+	// otherwise. Returns ErrNotFound for an id that does not exist.
+	SavePerson(ctx context.Context, p model.Person) (model.Person, error)
+
+	// DeletePerson removes someone from the cast and unassigns them from any
+	// session they were speaking in, so the rundown never points at nobody.
+	DeletePerson(ctx context.Context, id string) error
+
+	// MarkPersonInvited records that their personal link went out, and
+	// MarkPersonLogin that they signed in with it. Both feed Person.Access.
+	MarkPersonInvited(ctx context.Context, id string) error
+	MarkPersonLogin(ctx context.Context, id string) error
+
+	// SetPersonRevoked turns a personal link off (or back on). Revoked people
+	// cannot sign in, and sessions they already hold stop working.
+	SetPersonRevoked(ctx context.Context, id string, revoked bool) error
 
 	// ---- the shared gallery ----
 

@@ -3,12 +3,14 @@ package httpapi
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/adamchandra-2nd/api-house-moving-day/internal/model"
+	"github.com/adamchandra-2nd/api-house-moving-day/internal/store"
 	"github.com/adamchandra-2nd/api-house-moving-day/internal/token"
 )
 
@@ -108,6 +110,15 @@ func (s *Server) handleStageLogin(w http.ResponseWriter, r *http.Request) {
 		s.badRequest(w, "personId tidak dikenal")
 		return
 	}
+	if who.Access == "dicabut" {
+		s.writeJSON(w, http.StatusGone, errBody{Error: "akses ini sudah dicabut panitia", Code: "revoked"})
+		return
+	}
+	// For the Pengisi page: this link has now actually been used.
+	if err := s.store.MarkPersonLogin(r.Context(), who.ID); err != nil {
+		s.log.Warn("mark stage login", "person", who.ID, "err", err)
+	}
+	s.invalidate(r.Context(), keyPeople)
 
 	// The role comes from the person record, not from the request: an MC code
 	// holder must not be able to ask for the speaker's side by saying so.
@@ -153,6 +164,12 @@ func (s *Server) handleSaveStageState(w http.ResponseWriter, r *http.Request) {
 	}
 
 	rev, err := s.store.SaveStageState(r.Context(), body.Rev, body.State)
+	if err != nil && !errors.Is(err, store.ErrConflict) {
+		// Anything but a lost race is a real failure; reporting it as a
+		// conflict would send the client into a retry it can never win.
+		s.fail(w, r, err)
+		return
+	}
 	if err != nil {
 		// On a lost race the current rev goes back in the response, so the
 		// client can re-read and retry without a second request.

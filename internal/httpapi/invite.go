@@ -35,6 +35,11 @@ func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
 		s.fail(w, r, err)
 		return
 	}
+	rated, err := s.store.RatedEvents(r.Context(), g.ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
 
 	s.writeJSON(w, http.StatusOK, model.Invite{
 		GuestID:   g.ID,
@@ -45,8 +50,12 @@ func (s *Server) handleInvite(w http.ResponseWriter, r *http.Request) {
 		Code:      s.kenalanCode(r, g.ID),
 		Cards:     len(cards),
 		Outfit:    g.Outfit,
-		Countdown: set.Countdown,
-		Event:     s.eventInfo(r.Context(), set),
+
+		RewardClaimed: g.Reward == model.RewardClaimed,
+		FinalFeedback: g.FinalFeedback,
+		RatedEvents:   rated,
+		Countdown:     set.Countdown,
+		Event:         s.eventInfo(r.Context(), set),
 	})
 }
 
@@ -93,7 +102,7 @@ func (s *Server) eventInfo(ctx context.Context, set model.Settings) model.EventI
 	if err != nil {
 		// A row that cannot be parsed should not take the invite screen down
 		// with it: the guest gets the raw date and everything else works.
-		return model.EventInfo{Name: set.EventName, Host: host, DateLabel: set.Date, Place: set.Place.Name}
+		return model.EventInfo{Name: set.EventName, Host: host, DateLabel: set.Date, Place: set.Place.Name, Contact: set.Contact}
 	}
 
 	// The countdown counts to when the event actually starts, which is the
@@ -116,6 +125,7 @@ func (s *Server) eventInfo(ctx context.Context, set model.Settings) model.EventI
 		DateLabel: indonesianDate(day),
 		Place:     set.Place.Name,
 		StartsAt:  start.Format(time.RFC3339),
+		Contact:   set.Contact,
 	}
 }
 
@@ -185,7 +195,8 @@ func (s *Server) handleRsvp(w http.ResponseWriter, r *http.Request) {
 type checkInBody struct {
 	// By is "qr", "kode" or "panitia", matching AdminGuest.checkInBy.
 	By string `json:"by"`
-	// Code is the door code for "kode", or the committee PIN for "panitia".
+	// Code is the door code for "qr" (read from the door QR) and "kode"
+	// (typed from under it), or the committee PIN for "panitia".
 	Code string `json:"code,omitempty"`
 }
 
@@ -215,10 +226,10 @@ func (s *Server) handleCheckIn(w http.ResponseWriter, r *http.Request) {
 	doorCode, panitiaPIN := s.doorCodes(r.Context())
 
 	switch body.By {
-	case "qr":
-		// The QR code *is* the invite link, so holding a valid token is the
-		// proof. Nothing further to check.
-	case "kode":
+	case "qr", "kode":
+		// The door QR carries the same code that is printed under it, so both
+		// prove the same thing: this phone is at the door. Trusting a "qr"
+		// with no code let anyone check in from home by opening the scanner.
 		if body.Code != doorCode {
 			s.writeJSON(w, http.StatusForbidden, errBody{Error: "kode pintu salah", Code: "bad_code"})
 			return

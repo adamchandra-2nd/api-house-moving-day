@@ -92,7 +92,14 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("PUT /api/admin/rundown", admin(s.handleSaveRundown))
 	mux.Handle("GET /api/admin/announcements", admin(s.handleAdminAnnouncements))
 	mux.Handle("POST /api/admin/announcements", admin(s.handleAddAnnouncement))
+	mux.Handle("POST /api/admin/announcements/{id}/resend", admin(s.handleResendAnnouncement))
 	mux.Handle("GET /api/admin/people", admin(s.handleAdminPeople))
+	mux.Handle("POST /api/admin/people", admin(s.handleSavePerson))
+	mux.Handle("PUT /api/admin/people/{id}", admin(s.handleSavePerson))
+	mux.Handle("DELETE /api/admin/people/{id}", admin(s.handleDeletePerson))
+	mux.Handle("POST /api/admin/people/{id}/invite", admin(s.handleInvitePerson))
+	mux.Handle("DELETE /api/admin/people/{id}/access", admin(s.handleRevokePerson))
+	mux.Handle("POST /api/admin/people/{id}/access", admin(s.handleRevokePerson))
 
 	// Galeri: the same photos with the committee's own notes, and the two
 	// actions only they can take.
@@ -102,11 +109,13 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("POST /api/admin/photos/checked", admin(s.handlePhotosChecked))
 
 	mux.Handle("GET /api/admin/settings", admin(s.handleSettings))
+	mux.Handle("GET /api/admin/door", admin(s.handleDoor))
 	mux.Handle("PUT /api/admin/settings", admin(s.handleSaveSettings))
 
 	// ---- MC and Performance ----
 
 	mux.HandleFunc("POST /api/stage/login", s.handleStageLogin)
+	mux.HandleFunc("GET /api/stage/person/{id}", s.handleStagePerson)
 	mux.Handle("GET /api/stage/people", stage(s.handlePeople))
 	// What the MC and speaker screens start from, instead of a bundled copy.
 	mux.Handle("GET /api/stage/rundown", live(s.handleStageRundown))
@@ -118,6 +127,8 @@ func (s *Server) Routes() http.Handler {
 	// roles, a script the committee wrote would never leave their laptop.
 	mux.Handle("PUT /api/stage/state", live(s.handleSaveStageState))
 	mux.Handle("PATCH /api/questions/{id}/status", stage(s.handleQuestionStatus))
+	// The MC's Umumkan tab, reaching guests' phones like the committee's.
+	mux.Handle("POST /api/stage/announcements", s.requireRole("mc")(http.HandlerFunc(s.handleStageAnnouncement)))
 
 	// The live stream: MC, speaker and the committee's bell.
 	mux.Handle("GET /api/stage/stream", live(s.handleStageStream))

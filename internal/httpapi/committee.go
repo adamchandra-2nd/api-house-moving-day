@@ -3,10 +3,12 @@ package httpapi
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"strings"
 	"time"
 
 	"github.com/adamchandra-2nd/api-house-moving-day/internal/model"
+	"github.com/adamchandra-2nd/api-house-moving-day/internal/store"
 )
 
 // The admin pages that were still editing React state: Tamu, Hadiah, Rundown,
@@ -99,6 +101,137 @@ func (s *Server) handleAdminAnnouncements(w http.ResponseWriter, r *http.Request
 func (s *Server) handleAdminPeople(w http.ResponseWriter, r *http.Request) {
 	s.cachedJSON(w, r, keyPeople, s.cfg.CacheTTL, func(ctx context.Context) (any, error) {
 		return s.store.People(ctx)
+	})
+}
+
+type personBody struct {
+	Name  string `json:"name"`
+	Role  string `json:"role"`
+	Title string `json:"title"`
+	Phone string `json:"phone"`
+}
+
+// handleSavePerson adds an MC or speaker (POST) or edits one (PUT {id}).
+//
+// The cast used to be seeded and nothing else; with SEED=false there was no
+// way to put anyone on stage, so nobody could sign in to the MC side at all.
+func (s *Server) handleSavePerson(w http.ResponseWriter, r *http.Request) {
+	var body personBody
+	if err := decode(w, r, &body); err != nil {
+		s.badRequest(w, err.Error())
+		return
+	}
+	p := model.Person{
+		ID:    r.PathValue("id"),
+		Name:  strings.TrimSpace(body.Name),
+		Role:  body.Role,
+		Title: strings.TrimSpace(body.Title),
+		Phone: strings.TrimSpace(body.Phone),
+	}
+	if p.Name == "" {
+		s.badRequest(w, "nama wajib diisi")
+		return
+	}
+	if p.Role != "mc" && p.Role != "pembicara" {
+		s.badRequest(w, `peran harus "mc" atau "pembicara"`)
+		return
+	}
+
+	saved, err := s.store.SavePerson(r.Context(), p)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.invalidate(r.Context(), keyPeople)
+	status := http.StatusOK
+	if p.ID == "" {
+		status = http.StatusCreated
+	}
+	s.writeJSON(w, status, saved)
+}
+
+func (s *Server) handleDeletePerson(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.DeletePerson(r.Context(), r.PathValue("id")); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	// Their sessions were unassigned, so the rundown changed too.
+	s.invalidate(r.Context(), keyPeople, keyAgenda)
+	s.publishStage(r.Context(), stageEvent{Kind: "rundown"})
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleInvitePerson records that the committee sent or copied someone's
+// personal link, so the Pengisi page reads "terkirim" on every laptop.
+func (s *Server) handleInvitePerson(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.MarkPersonInvited(r.Context(), r.PathValue("id")); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.invalidate(r.Context(), keyPeople)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleRevokePerson (DELETE) turns a personal link off; POST turns it back
+// on. Revoking also ends any session they already hold, on its next request.
+func (s *Server) handleRevokePerson(w http.ResponseWriter, r *http.Request) {
+	revoked := r.Method == http.MethodDelete
+	if err := s.store.SetPersonRevoked(r.Context(), r.PathValue("id"), revoked); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.invalidate(r.Context(), keyPeople)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleStagePerson is what the personal stage link opens with, before any
+// sign-in: whose link this is, to greet them by name and say which number the
+// code went to. The id is random and the phone is masked, so this says no
+// more than the WhatsApp message the link arrived in.
+func (s *Server) handleStagePerson(w http.ResponseWriter, r *http.Request) {
+	if !s.cache.Allow(r.Context(), "rl:stage-person:"+clientIP(r), loginTriesPerMinute, time.Minute) {
+		s.writeJSON(w, http.StatusTooManyRequests, errBody{Error: "terlalu banyak percobaan, tunggu sebentar", Code: "rate_limited"})
+		return
+	}
+	people, err := s.store.People(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	id := r.PathValue("id")
+	for _, p := range people {
+		if p.ID == id {
+			if p.Access == "dicabut" {
+				s.writeJSON(w, http.StatusGone, errBody{Error: "akses ini sudah dicabut panitia", Code: "revoked"})
+				return
+			}
+			p.Phone = maskPhone(p.Phone)
+			s.writeJSON(w, http.StatusOK, p)
+			return
+		}
+	}
+	s.fail(w, r, store.ErrNotFound)
+}
+
+// maskPhone keeps the first four and last three digits, which is what the
+// login screen shows anyway.
+func maskPhone(p string) string {
+	if len(p) <= 7 {
+		return strings.Repeat("•", len(p))
+	}
+	return p[:4] + strings.Repeat("•", len(p)-7) + p[len(p)-3:]
+}
+
+// handleDoor is what the committee prints for the entrance: the URL inside
+// the door QR, built from APP_BASE_URL so it opens wherever guests actually
+// run the app, and the code printed under it. Scanning it with the phone's own
+// camera opens the app on /check-in with the code; the in-app scanner reads
+// the same URL.
+func (s *Server) handleDoor(w http.ResponseWriter, r *http.Request) {
+	doorCode, _ := s.doorCodes(r.Context())
+	s.writeJSON(w, http.StatusOK, map[string]string{
+		"url":  s.cfg.AppBaseURL + "/check-in?door=" + url.QueryEscape(doorCode),
+		"code": doorCode,
 	})
 }
 

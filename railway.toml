@@ -1,0 +1,12 @@
+# Railway reads this on every deploy. The Dockerfile next to it does the build.
+[build]
+builder = "DOCKERFILE"
+dockerfilePath = "Dockerfile"
+
+[deploy]
+# A new deploy only takes traffic once /healthz answers, so a bad
+# DATABASE_URL fails the deploy instead of replacing a working one.
+healthcheckPath = "/healthz"
+healthcheckTimeout = 60
+restartPolicyType = "ON_FAILURE"
+restartPolicyMaxRetries = 5

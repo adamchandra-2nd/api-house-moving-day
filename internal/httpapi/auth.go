@@ -79,6 +79,15 @@ func (s *Server) requireRole(roles ...string) middleware {
 				s.writeJSON(w, http.StatusForbidden, errBody{Error: "tidak boleh", Code: "forbidden"})
 				return
 			}
+			// A stage session outlives nothing the committee does: revoking or
+			// deleting the person ends it on their next request, not 12 hours
+			// later when the token would have expired anyway.
+			if sess.Role == "mc" || sess.Role == "pembicara" {
+				if code, msg := s.stageStanding(r.Context(), sess.Subject); code != 0 {
+					s.writeJSON(w, code, errBody{Error: msg, Code: "revoked"})
+					return
+				}
+			}
 			next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxSession, sess)))
 		})
 	}
@@ -88,4 +97,26 @@ func (s *Server) requireRole(roles ...string) middleware {
 func sessionOf(r *http.Request) token.Session {
 	s, _ := r.Context().Value(ctxSession).(token.Session)
 	return s
+}
+
+// stageStanding says whether a stage person may still act: 0 when they may,
+// 410 when the committee revoked or removed them. One small query per stage
+// request: two phones polling is nothing, and a cached answer would let a
+// revoked MC keep going for the length of the cache.
+func (s *Server) stageStanding(ctx context.Context, personID string) (int, string) {
+	people, err := s.store.People(ctx)
+	if err != nil {
+		// The database being briefly unreachable should not sign the MC out
+		// mid-session; the request itself will fail or succeed on its own.
+		return 0, ""
+	}
+	for _, p := range people {
+		if p.ID == personID {
+			if p.Access == "dicabut" {
+				return http.StatusGone, "akses ini sudah dicabut panitia"
+			}
+			return 0, ""
+		}
+	}
+	return http.StatusGone, "kamu sudah tidak terdaftar sebagai pengisi acara"
 }
