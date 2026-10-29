@@ -1,0 +1,43 @@
+# Render Blueprint: Dashboard -> New -> Blueprint -> this repo.
+#
+# Same image as `docker build .`; Render injects PORT and the server binds it
+# (listenAddr in internal/config), so ADDR and PORT are never set here.
+services:
+  - type: web
+    name: hmd-api
+    runtime: docker
+    dockerfilePath: ./Dockerfile
+    # Frankfurt, not Singapore: the database is Supabase eu-west-1, and one API
+    # request can make several queries. Each of those crossing Asia-Europe
+    # costs far more than the guest's single request does.
+    region: frankfurt
+    # Not free: a free instance sleeps after 15 idle minutes and takes tens of
+    # seconds to wake, which drops the MC/speaker live stream mid-event.
+    plan: starter
+    branch: feat/supabase-empty-e2e
+    autoDeploy: true
+    # A deploy only takes traffic once this answers, so a wrong DATABASE_URL
+    # fails the deploy instead of replacing a working one.
+    healthCheckPath: /healthz
+    envVars:
+      # Supabase -> Connect -> pooled string (port 6543), with sslmode=require.
+      - key: DATABASE_URL
+        sync: false
+      - key: SEED
+        value: "false"
+      - key: SESSION_SECRET
+        generateValue: true
+      # The Vercel production domain, e.g. https://house-moving-day.vercel.app.
+      # Invite links, stage links and the door QR are built from it.
+      - key: APP_BASE_URL
+        sync: false
+      - key: ALLOWED_ORIGINS
+        sync: false
+      # The repo is public, so the defaults in .env.example are public too.
+      # Set your own before anything real.
+      - key: ADMIN_EMAIL
+        sync: false
+      - key: ADMIN_PIN
+        sync: false
+      - key: STAGE_CODE
+        sync: false
