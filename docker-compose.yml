@@ -1,0 +1,45 @@
+# Local Redis and Postgres, for testing the real code paths before signing up
+# for Upstash and Supabase.
+#
+#   docker compose up -d
+#
+# Then in .env:
+#   REDIS_URL=redis://localhost:6379
+#   DATABASE_URL=postgresql://hmd:hmd@localhost:5432/hmd?sslmode=disable
+#
+# The Postgres container runs migrations/001_init.sql on first start, and the
+# API seeds the sample data into an empty database by itself.
+
+services:
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    # Append-only so a restart does not wipe the stage state mid-test.
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - ./.data/redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  postgres:
+    image: postgres:16-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: hmd
+      POSTGRES_PASSWORD: hmd
+      POSTGRES_DB: hmd
+    volumes:
+      - ./.data/postgres:/var/lib/postgresql/data
+      # Anything in this directory runs once, when the data directory is
+      # created. Delete ./.data/postgres to re-run it.
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U hmd -d hmd"]
+      interval: 5s
+      timeout: 3s
+      retries: 10

@@ -1,0 +1,11 @@
+# Secrets: every connection string lives here and nowhere else.
+.env
+.env.local
+
+# Build output
+/bin/
+/server
+/server.exe
+
+# Local Postgres/Redis data from docker-compose
+/.data/

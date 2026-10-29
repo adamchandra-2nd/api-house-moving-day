@@ -1,0 +1,11 @@
+# Keep secrets and local state out of the build context. .env especially:
+# without this line the database password would be baked into the image.
+.env
+.data/
+.git/
+
+# Local-only, and not part of the deployed service.
+docker-compose.yml
+README.md
+server
+server.exe
