@@ -11,9 +11,12 @@ services:
     # request can make several queries. Each of those crossing Asia-Europe
     # costs far more than the guest's single request does.
     region: frankfurt
-    # Not free: a free instance sleeps after 15 idle minutes and takes tens of
-    # seconds to wake, which drops the MC/speaker live stream mid-event.
-    plan: starter
+    # Free needs no card. It sleeps after 15 idle minutes and takes tens of
+    # seconds to wake, which would drop the MC/speaker live stream -- so keep
+    # it awake with an external ping to /healthz every 5-10 minutes
+    # (cron-job.org or UptimeRobot). For the event day itself, "starter" is
+    # the no-ping option.
+    plan: free
     branch: feat/supabase-empty-e2e
     autoDeploy: true
     # A deploy only takes traffic once this answers, so a wrong DATABASE_URL
