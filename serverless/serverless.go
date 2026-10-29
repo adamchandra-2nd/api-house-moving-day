@@ -65,6 +65,10 @@ func handler() (http.Handler, error) {
 		return nil, errors.New("DATABASE_URL must be set on Vercel")
 	}
 	cfg.Serverless = true
+	// Each instance has its own in-memory cache, and a write clears only the
+	// instance that took it. A short TTL bounds how long another instance can
+	// still serve the old rundown or announcements to guests.
+	cfg.CacheTTL = 3 * time.Second
 
 	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
 	defer cancel()

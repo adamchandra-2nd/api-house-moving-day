@@ -400,16 +400,20 @@ func nameSlug(name string) string {
 
 var phoneShape = regexp.MustCompile(`^08[0-9]{8,11}$`)
 
-// normalizePhone mirrors normalizePhone in src/admin/invite.ts: strip spaces
-// and dashes, turn +62/62 into a leading 0, and return "" if the result
-// cannot be an Indonesian mobile number.
+// normalizePhone mirrors normalizePhone in src/admin/invite.ts: keep digits
+// (and a leading +), turn +62/62 -- or +620/620 -- into a leading 0, and
+// return "" if the result cannot be an Indonesian mobile number. Digits only,
+// because a number pasted from WhatsApp carries invisible direction marks.
 func normalizePhone(raw string) string {
-	s := strings.NewReplacer(" ", "", "-", "", "(", "", ")", "").Replace(strings.TrimSpace(raw))
-	switch {
-	case strings.HasPrefix(s, "+62"):
-		s = "0" + s[3:]
-	case strings.HasPrefix(s, "62"):
-		s = "0" + s[2:]
+	s := strings.Map(func(r rune) rune {
+		if (r >= '0' && r <= '9') || r == '+' {
+			return r
+		}
+		return -1
+	}, raw)
+	s = strings.TrimPrefix(s, "+")
+	if strings.HasPrefix(s, "62") {
+		s = "0" + strings.TrimPrefix(s[2:], "0")
 	}
 	if !phoneShape.MatchString(s) {
 		return ""
