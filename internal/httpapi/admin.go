@@ -428,3 +428,15 @@ func waNumber(phone string) string {
 	}
 	return phone
 }
+
+// handleDeleteAnnouncement takes an announcement back; it leaves guests'
+// Notifikasi on their next read.
+func (s *Server) handleDeleteAnnouncement(w http.ResponseWriter, r *http.Request) {
+	if err := s.store.DeleteAnnouncement(r.Context(), r.PathValue("id")); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.invalidate(r.Context(), keyAnnouncements)
+	s.publishStage(r.Context(), stageEvent{Kind: "announcement"})
+	w.WriteHeader(http.StatusNoContent)
+}

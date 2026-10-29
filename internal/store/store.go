@@ -10,6 +10,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"time"
 
 	"github.com/adamchandra-2nd/api-house-moving-day/internal/model"
 )
@@ -130,6 +131,21 @@ type Store interface {
 	// ResendAnnouncement moves an announcement to minute, which is what makes
 	// guests' phones show it again as new.
 	ResendAnnouncement(ctx context.Context, id string, minute int) (model.Announcement, error)
+
+	// DeleteAnnouncement takes it back: it leaves the committee's history and
+	// guests' Notifikasi alike.
+	DeleteAnnouncement(ctx context.Context, id string) error
+
+	// ---- "Ajak kenalan" ----
+
+	// AddKenalanInvite records fromID asking toID to meet. ErrConflict when
+	// the same pair was asked less than cooldown ago; ErrNotFound when toID
+	// is not a guest who is here.
+	AddKenalanInvite(ctx context.Context, fromID, toID string, minute int, cooldown time.Duration) (model.KenalanInvite, error)
+
+	// KenalanInvites is what one guest received, newest first, and the latest
+	// invite they sent to each guest.
+	KenalanInvites(ctx context.Context, guestID string) (received, sent []model.KenalanInvite, err error)
 
 	// ---- people on stage ----
 

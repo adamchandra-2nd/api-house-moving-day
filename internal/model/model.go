@@ -276,6 +276,18 @@ type Announcement struct {
 	Source string `json:"source"`
 }
 
+// KenalanInvite is one guest letting another know they would like to meet.
+type KenalanInvite struct {
+	ID       string `json:"id"`
+	FromID   string `json:"fromId"`
+	FromName string `json:"fromName"`
+	ToID     string `json:"toId"`
+	// At is the rundown minute it was sent, like everything else on screen.
+	At int `json:"at"`
+	// SentAt is Unix milliseconds, for the sender's "Ajak lagi" countdown.
+	SentAt int64 `json:"sentAt"`
+}
+
 // Card is a kenalan card one guest collected from another.
 type Card struct {
 	GuestID string `json:"guestId"`

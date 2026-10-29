@@ -47,6 +47,9 @@ type Memory struct {
 	stageRev   int64
 	stageState json.RawMessage
 
+	// kenalan holds every "Ajak kenalan", oldest first.
+	kenalan []kenalanRow
+
 	// seq backs generated ids, so two questions created in the same
 	// millisecond cannot collide.
 	seq int64
@@ -726,6 +729,63 @@ func (m *Memory) AddAnnouncement(ctx context.Context, a model.Announcement) (mod
 	}
 	m.announcements = append(m.announcements, a)
 	return a, nil
+}
+
+func (m *Memory) DeleteAnnouncement(ctx context.Context, id string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	for i := range m.announcements {
+		if m.announcements[i].ID == id {
+			m.announcements = append(m.announcements[:i], m.announcements[i+1:]...)
+			return nil
+		}
+	}
+	return ErrNotFound
+}
+
+type kenalanRow struct {
+	inv model.KenalanInvite
+	at  time.Time
+}
+
+func (m *Memory) AddKenalanInvite(ctx context.Context, fromID, toID string, minute int, cooldown time.Duration) (model.KenalanInvite, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	from, ok := m.byID[fromID]
+	to, ok2 := m.byID[toID]
+	if !ok || !ok2 || !to.Hadir {
+		return model.KenalanInvite{}, ErrNotFound
+	}
+	now := time.Now()
+	for _, k := range m.kenalan {
+		if k.inv.FromID == fromID && k.inv.ToID == toID && now.Sub(k.at) < cooldown {
+			return model.KenalanInvite{}, fmt.Errorf("%w: kamu baru saja mengajaknya, coba lagi nanti", ErrConflict)
+		}
+	}
+	inv := model.KenalanInvite{ID: m.nextID("k"), FromID: fromID, FromName: from.Name, ToID: toID, At: minute, SentAt: now.UnixMilli()}
+	m.kenalan = append(m.kenalan, kenalanRow{inv: inv, at: now})
+	return inv, nil
+}
+
+func (m *Memory) KenalanInvites(ctx context.Context, guestID string) ([]model.KenalanInvite, []model.KenalanInvite, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	received := []model.KenalanInvite{}
+	latest := map[string]model.KenalanInvite{}
+	for i := len(m.kenalan) - 1; i >= 0; i-- {
+		k := m.kenalan[i].inv
+		if k.ToID == guestID && len(received) < 50 {
+			received = append(received, k)
+		}
+		if _, seen := latest[k.ToID]; k.FromID == guestID && !seen {
+			latest[k.ToID] = k
+		}
+	}
+	sent := make([]model.KenalanInvite, 0, len(latest))
+	for _, k := range latest {
+		sent = append(sent, k)
+	}
+	return received, sent, nil
 }
 
 func (m *Memory) ResendAnnouncement(ctx context.Context, id string, minute int) (model.Announcement, error) {
