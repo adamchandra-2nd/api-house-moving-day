@@ -171,6 +171,9 @@ type Guest struct {
 	Question string `json:"question"`
 	Outfit   string `json:"outfit"`
 	Code     string `json:"code"`
+	// SpriteAt is when their character picture was last uploaded, as Unix
+	// milliseconds; 0 means none yet. It versions the image URL.
+	SpriteAt int64 `json:"spriteAt,omitempty"`
 }
 
 // AdminGuest is the committee's view: everything, contact details included.

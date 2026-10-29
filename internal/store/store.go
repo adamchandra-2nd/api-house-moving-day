@@ -74,6 +74,12 @@ type Store interface {
 	// the same character back.
 	SetOutfit(ctx context.Context, guestID string, o model.Outfit) error
 
+	// SetSprite stores the picture of a guest's character, which their own
+	// phone renders from the 3D scene; Sprite reads it back, ErrNotFound when
+	// there is none. Other guests see it on the kenalan cards.
+	SetSprite(ctx context.Context, guestID string, raw []byte, mime string) error
+	Sprite(ctx context.Context, guestID string) ([]byte, string, error)
+
 	// MarkInvite records a delivery attempt against several guests at once.
 	MarkInvite(ctx context.Context, guestIDs []string, status model.InviteStatus, errText string, minute int) error
 

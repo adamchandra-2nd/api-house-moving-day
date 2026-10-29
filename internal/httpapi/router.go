@@ -46,6 +46,8 @@ func (s *Server) Routes() http.Handler {
 	// ---- guest reads ----
 
 	mux.Handle("GET /api/guests", guest(s.handleGuests))
+	mux.Handle("GET /api/guests/{id}/sprite", guest(s.handleSprite))
+	mux.Handle("PUT /api/invite/sprite", guest(s.handleSetSprite))
 	mux.Handle("GET /api/agenda", guest(s.handleAgenda))
 	mux.Handle("GET /api/announcements", guest(s.handleAnnouncements))
 	mux.Handle("GET /api/people", guest(s.handlePeople))

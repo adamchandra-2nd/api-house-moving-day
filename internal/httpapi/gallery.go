@@ -319,3 +319,58 @@ func decodeDataURL(s string) ([]byte, string, error) {
 	}
 	return raw, mime, nil
 }
+
+// ---- character pictures for the kenalan cards ----
+
+// maxSpriteBytes caps one character picture. The phone sends a cropped webp
+// of a few tens of KB; anything near this is not a character picture.
+const maxSpriteBytes = 512 << 10
+
+type spriteBody struct {
+	// Data is a data: URL, like a photo upload.
+	Data string `json:"data"`
+}
+
+// handleSetSprite stores the picture of this guest's character. Their phone
+// renders it from the 3D scene when they confirm the outfit; every other
+// phone only ever gets the outfit's label, so without this a kenalan card
+// said "Hoodie" over the bare character.
+func (s *Server) handleSetSprite(w http.ResponseWriter, r *http.Request) {
+	g := guestOf(r)
+	var body spriteBody
+	if err := decode(w, r, &body); err != nil {
+		s.badRequest(w, err.Error())
+		return
+	}
+	raw, mime, err := decodeDataURL(body.Data)
+	if err != nil {
+		s.badRequest(w, err.Error())
+		return
+	}
+	if len(raw) > maxSpriteBytes {
+		s.badRequest(w, "gambar karakter terlalu besar")
+		return
+	}
+	if err := s.store.SetSprite(r.Context(), g.ID, raw, mime); err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.invalidate(r.Context(), keyGuests)
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleSprite serves a guest's character picture to another guest. The URL
+// carries ?v=<spriteAt>, so a new upload is a new URL and the old one can be
+// cached for as long as the browser likes.
+func (s *Server) handleSprite(w http.ResponseWriter, r *http.Request) {
+	raw, mime, err := s.store.Sprite(r.Context(), r.PathValue("id"))
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	w.Header().Set("Content-Type", mime)
+	w.Header().Set("Cache-Control", "private, max-age=604800, immutable")
+	w.Header().Set("Content-Length", strconv.Itoa(len(raw)))
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(raw)
+}

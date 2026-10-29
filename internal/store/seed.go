@@ -86,6 +86,10 @@ type guestRow struct {
 	profile profile
 	// revoked kills the link without deleting the guest.
 	revoked bool
+	// sprite is their character picture, see Store.SetSprite.
+	sprite     []byte
+	spriteMime string
+	spriteAt   int64
 }
 
 // buildGuests reproduces the ADMIN_GUESTS mapping, index for index.

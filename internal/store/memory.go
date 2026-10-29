@@ -108,6 +108,27 @@ func (m *Memory) nextID(prefix string) string {
 
 // ---- guests ----
 
+func (m *Memory) SetSprite(ctx context.Context, guestID string, raw []byte, mime string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	g, ok := m.byID[guestID]
+	if !ok {
+		return ErrNotFound
+	}
+	g.sprite, g.spriteMime, g.spriteAt = raw, mime, time.Now().UnixMilli()
+	return nil
+}
+
+func (m *Memory) Sprite(ctx context.Context, guestID string) ([]byte, string, error) {
+	m.mu.RLock()
+	defer m.mu.RUnlock()
+	g, ok := m.byID[guestID]
+	if !ok || g.sprite == nil {
+		return nil, "", ErrNotFound
+	}
+	return g.sprite, g.spriteMime, nil
+}
+
 func (m *Memory) PresentGuests(ctx context.Context) ([]model.Guest, error) {
 	m.mu.RLock()
 	defer m.mu.RUnlock()
@@ -126,6 +147,7 @@ func (m *Memory) PresentGuests(ctx context.Context) ([]model.Guest, error) {
 			Question: g.profile.Question,
 			Outfit:   g.profile.Outfit,
 			Code:     g.profile.Code,
+			SpriteAt: g.spriteAt,
 		})
 	}
 	return out, nil

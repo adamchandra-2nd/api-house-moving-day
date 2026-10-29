@@ -2,9 +2,11 @@ package httpapi
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
+	"github.com/adamchandra-2nd/api-house-moving-day/internal/store"
 	"github.com/adamchandra-2nd/api-house-moving-day/internal/token"
 )
 
@@ -43,13 +45,22 @@ func (s *Server) inviteAuth(next http.Handler) http.Handler {
 			s.writeJSON(w, http.StatusUnauthorized, errBody{Error: "buka lewat link undangan kamu", Code: "no_invite"})
 			return
 		}
-		if !s.cache.Allow(r.Context(), "rl:invite:"+clientIP(r), inviteTriesPerMinute, time.Minute) {
+		// Only wrong tokens count against the limit. Counting every request
+		// throttled real guests: one phone's own polling is about twenty
+		// requests a minute, and at the venue every guest on the office wifi
+		// shares one public IP. Guessing is what the limit is for, and a
+		// guess is a token that does not resolve.
+		ip := clientIP(r)
+		if _, blocked := s.cache.Get(r.Context(), "rl:invite-block:"+ip); blocked {
 			s.writeJSON(w, http.StatusTooManyRequests, errBody{Error: "terlalu banyak percobaan, tunggu sebentar", Code: "rate_limited"})
 			return
 		}
 
 		guest, err := s.store.GuestByInviteToken(r.Context(), tok)
 		if err != nil {
+			if errors.Is(err, store.ErrNotFound) && !s.cache.Allow(r.Context(), "rl:invite-miss:"+ip, inviteTriesPerMinute, time.Minute) {
+				s.cache.Set(r.Context(), "rl:invite-block:"+ip, []byte("1"), time.Minute)
+			}
 			s.fail(w, r, err)
 			return
 		}

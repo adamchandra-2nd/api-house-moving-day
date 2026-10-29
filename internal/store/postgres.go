@@ -149,7 +149,8 @@ func scanAdminGuest(row pgx.Row) (model.AdminGuest, error) {
 
 func (p *Postgres) PresentGuests(ctx context.Context) ([]model.Guest, error) {
 	rows, err := p.pool.Query(ctx, `
-		select id, name, role, question, outfit, code
+		select id, name, role, question, outfit, code,
+			coalesce((extract(epoch from sprite_at) * 1000)::bigint, 0)
 		from guests
 		where hadir
 		order by created_at, id`)
@@ -161,12 +162,33 @@ func (p *Postgres) PresentGuests(ctx context.Context) ([]model.Guest, error) {
 	out := []model.Guest{} // never nil: an empty list is [] on the wire, not null
 	for rows.Next() {
 		var g model.Guest
-		if err := rows.Scan(&g.ID, &g.Name, &g.Role, &g.Question, &g.Outfit, &g.Code); err != nil {
+		if err := rows.Scan(&g.ID, &g.Name, &g.Role, &g.Question, &g.Outfit, &g.Code, &g.SpriteAt); err != nil {
 			return nil, wrap(err)
 		}
 		out = append(out, g)
 	}
 	return out, wrap(rows.Err())
+}
+
+func (p *Postgres) SetSprite(ctx context.Context, guestID string, raw []byte, mime string) error {
+	tag, err := p.pool.Exec(ctx, `
+		update guests set sprite = $2, sprite_mime = $3, sprite_at = now() where id = $1`,
+		guestID, raw, mime)
+	if err != nil {
+		return wrap(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (p *Postgres) Sprite(ctx context.Context, guestID string) ([]byte, string, error) {
+	var raw []byte
+	var mime string
+	err := p.pool.QueryRow(ctx, `
+		select sprite, sprite_mime from guests where id = $1 and sprite is not null`, guestID).Scan(&raw, &mime)
+	return raw, mime, wrap(err)
 }
 
 func (p *Postgres) AdminGuests(ctx context.Context) ([]model.AdminGuest, error) {
