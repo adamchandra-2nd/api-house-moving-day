@@ -172,6 +172,18 @@ func (s *Server) handleInvitePerson(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// handleStageCode tells the committee the code MC and speakers sign in with.
+//
+// Nothing sends it for them: the committee passes it on by WhatsApp, in a
+// message of its own after the link. Until now it lived only in STAGE_CODE,
+// so the admin had no way to see what to send.
+func (s *Server) handleStageCode(w http.ResponseWriter, r *http.Request) {
+	w.Header().Set("Cache-Control", "no-store")
+	s.writeJSON(w, http.StatusOK, struct {
+		Code string `json:"code"`
+	}{s.cfg.StageCode})
+}
+
 // handleRevokePerson (DELETE) turns a personal link off; POST turns it back
 // on. Revoking also ends any session they already hold, on its next request.
 func (s *Server) handleRevokePerson(w http.ResponseWriter, r *http.Request) {
