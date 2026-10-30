@@ -103,6 +103,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("PUT /api/admin/people/{id}", admin(s.handleSavePerson))
 	mux.Handle("DELETE /api/admin/people/{id}", admin(s.handleDeletePerson))
 	mux.Handle("POST /api/admin/people/{id}/invite", admin(s.handleInvitePerson))
+	mux.Handle("GET /api/admin/stage-code", admin(s.handleStageCode))
 	mux.Handle("DELETE /api/admin/people/{id}/access", admin(s.handleRevokePerson))
 	mux.Handle("POST /api/admin/people/{id}/access", admin(s.handleRevokePerson))
 
