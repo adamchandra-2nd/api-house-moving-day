@@ -252,11 +252,12 @@ func seedSessions() []model.Session {
 	}
 }
 
-// seedPeople is PEOPLE: who stands on stage.
+// seedPeople is PEOPLE: who stands on stage. Their codes are random like
+// anyone else's; the admin's Pengisi page shows them.
 func seedPeople() []model.Person {
 	return []model.Person{
-		{ID: "nadia", Name: "Nadia Putri", Role: "mc", Title: "MC", Phone: "081234561114"},
-		{ID: "ardi", Name: "Ardi Nugraha", Role: "pembicara", Title: "Guest star talkshow", Phone: "081377705512"},
+		{ID: "nadia", Name: "Nadia Putri", Role: "mc", Title: "MC", Phone: "081234561114", StageCode: NewStageCode()},
+		{ID: "ardi", Name: "Ardi Nugraha", Role: "pembicara", Title: "Guest star talkshow", Phone: "081377705512", StageCode: NewStageCode()},
 	}
 }
 

@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"math/big"
 	"net/url"
 	"strconv"
 	"time"
@@ -760,7 +761,7 @@ func (p *Postgres) ResendAnnouncement(ctx context.Context, id string, minute int
 
 func (p *Postgres) People(ctx context.Context) ([]model.Person, error) {
 	rows, err := p.pool.Query(ctx, `
-		select id, name, role, title, phone,
+		select id, name, role, title, phone, coalesce(stage_code, ''),
 			case when revoked then 'dicabut'
 			     when last_login_at is not null then 'masuk'
 			     when invited_at is not null then 'terkirim'
@@ -774,7 +775,7 @@ func (p *Postgres) People(ctx context.Context) ([]model.Person, error) {
 	out := []model.Person{}
 	for rows.Next() {
 		var pr model.Person
-		if err := rows.Scan(&pr.ID, &pr.Name, &pr.Role, &pr.Title, &pr.Phone, &pr.Access); err != nil {
+		if err := rows.Scan(&pr.ID, &pr.Name, &pr.Role, &pr.Title, &pr.Phone, &pr.StageCode, &pr.Access); err != nil {
 			return nil, wrap(err)
 		}
 		out = append(out, pr)
@@ -786,18 +787,21 @@ func (p *Postgres) SavePerson(ctx context.Context, pr model.Person) (model.Perso
 	if pr.ID == "" {
 		pr.ID = newID("p")
 		pr.Access = "belum"
+		pr.StageCode = NewStageCode()
 		_, err := p.pool.Exec(ctx, `
-			insert into people (id, name, role, title, phone) values ($1, $2, $3, $4, $5)`,
-			pr.ID, pr.Name, pr.Role, pr.Title, pr.Phone)
+			insert into people (id, name, role, title, phone, stage_code) values ($1, $2, $3, $4, $5, $6)`,
+			pr.ID, pr.Name, pr.Role, pr.Title, pr.Phone, pr.StageCode)
 		return pr, wrap(err)
 	}
+	// The code stays: an edit to someone's name must not lock them out.
 	err := p.pool.QueryRow(ctx, `
 		update people set name = $2, role = $3, title = $4, phone = $5 where id = $1
-		returning case when revoked then 'dicabut'
+		returning coalesce(stage_code, ''),
+		          case when revoked then 'dicabut'
 		               when last_login_at is not null then 'masuk'
 		               when invited_at is not null then 'terkirim'
 		               else 'belum' end`,
-		pr.ID, pr.Name, pr.Role, pr.Title, pr.Phone).Scan(&pr.Access)
+		pr.ID, pr.Name, pr.Role, pr.Title, pr.Phone).Scan(&pr.StageCode, &pr.Access)
 	return pr, wrap(err)
 }
 
@@ -987,9 +991,9 @@ func (p *Postgres) SeedIfEmpty(ctx context.Context) (bool, error) {
 	}
 	for _, pr := range seedPeople() {
 		if _, err := tx.Exec(ctx, `
-			insert into people (id, name, role, title, phone)
-			values ($1, $2, $3, $4, $5) on conflict (id) do nothing`,
-			pr.ID, pr.Name, pr.Role, pr.Title, pr.Phone); err != nil {
+			insert into people (id, name, role, title, phone, stage_code)
+			values ($1, $2, $3, $4, $5, $6) on conflict (id) do nothing`,
+			pr.ID, pr.Name, pr.Role, pr.Title, pr.Phone, pr.StageCode); err != nil {
 			return false, wrap(err)
 		}
 	}
@@ -1169,6 +1173,17 @@ func (p *Postgres) MarkPhotosChecked(ctx context.Context, ids []string) error {
 // need actual randomness. A failure falls back to the timestamp rather than
 // refusing the upload: a vanishingly rare duplicate is caught by the primary
 // key, and losing a guest's photo to a dry entropy pool would be worse.
+// NewStageCode is six random digits for an MC or speaker to sign in with.
+func NewStageCode() string {
+	n, err := rand.Int(rand.Reader, big.NewInt(1_000_000))
+	if err != nil {
+		// crypto/rand does not fail on supported platforms; a code that is
+		// still unique per moment beats refusing to add the person.
+		return fmt.Sprintf("%06d", time.Now().UnixNano()%1_000_000)
+	}
+	return fmt.Sprintf("%06d", n.Int64())
+}
+
 func newID(prefix string) string {
 	b := make([]byte, 8)
 	if _, err := rand.Read(b); err != nil {

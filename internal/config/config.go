@@ -41,9 +41,6 @@ type Config struct {
 	AdminEmail string
 	AdminPIN   string
 
-	// StageCode is what MC and speakers type in, from src/stage/StageLogin.tsx.
-	StageCode string
-
 	// DoorCode and PanitiaPIN mirror src/config.ts.
 	DoorCode   string
 	PanitiaPIN string
@@ -81,7 +78,6 @@ func Load() (*Config, error) {
 		SessionSecret:  env("SESSION_SECRET", ""),
 		AdminEmail:     env("ADMIN_EMAIL", "admin@potara.id"),
 		AdminPIN:       env("ADMIN_PIN", "123456"),
-		StageCode:      env("STAGE_CODE", "246810"),
 		DoorCode:       env("DOOR_CODE", "1108"),
 		PanitiaPIN:     env("PANITIA_PIN", "2026"),
 		CacheTTL:       15 * time.Second,

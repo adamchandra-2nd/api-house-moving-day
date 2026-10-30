@@ -242,6 +242,10 @@ type Person struct {
 	// "belum" (not sent), "terkirim", "masuk" (has signed in) or "dicabut".
 	// Derived by the store; ignored on writes.
 	Access string `json:"access"`
+	// StageCode is the six digits they sign in with, sent along with their
+	// link. Never in this type's JSON: guests and the public link lookup
+	// serialise Person too. Only the committee's endpoints add it.
+	StageCode string `json:"-"`
 }
 
 // Question is one question sent to the stage.
