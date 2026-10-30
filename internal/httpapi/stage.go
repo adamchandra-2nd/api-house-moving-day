@@ -151,6 +151,38 @@ func (s *Server) handleStageState(w http.ResponseWriter, r *http.Request) {
 	s.writeJSON(w, http.StatusOK, stageStateResult{Rev: rev, State: state})
 }
 
+// liveView is the part of the stage document a guest may see: whether the
+// event has started on stage, and which session the MC is running.
+type liveView struct {
+	Phase  string  `json:"phase"`
+	LiveID *string `json:"liveId"`
+}
+
+// handleLive tells guests which session the MC actually has on stage.
+//
+// Guests used to work it out from the clock and the rundown alone, so a
+// session started early, late, or on a rehearsal day was never "now" on
+// their phones, and "Tanya pembicara" never showed while the MC and speaker
+// were already live.
+func (s *Server) handleLive(w http.ResponseWriter, r *http.Request) {
+	_, state, err := s.store.StageState(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	view := liveView{Phase: "pre"}
+	if len(state) > 0 {
+		// A document this server cannot read says nothing about the stage:
+		// guests fall back to the clock, as before.
+		_ = json.Unmarshal(state, &view)
+	}
+	if view.Phase == "" {
+		view.Phase = "pre"
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	s.writeJSON(w, http.StatusOK, view)
+}
+
 // handleSaveStageState writes the shared state and pushes it to the other side.
 func (s *Server) handleSaveStageState(w http.ResponseWriter, r *http.Request) {
 	var body stageStateBody
