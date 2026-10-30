@@ -350,3 +350,53 @@ func (s *Server) handleFinalFeedback(w http.ResponseWriter, r *http.Request) {
 		return f, nil
 	})
 }
+
+// ---- "Ajak kenalan" ----
+
+// kenalanCooldown is how long before the same guest can be asked again: long
+// enough that it is not a doorbell, short enough to try once more later.
+const kenalanCooldown = 10 * time.Minute
+
+type kenalanInviteBody struct {
+	GuestID string `json:"guestId"`
+}
+
+// handleKenalanInvite lets the guest know someone would like to meet them.
+// No location goes with it: the room shown in the app is not necessarily
+// where either of them is standing.
+func (s *Server) handleKenalanInvite(w http.ResponseWriter, r *http.Request) {
+	g := guestOf(r)
+	var body kenalanInviteBody
+	if err := decode(w, r, &body); err != nil {
+		s.badRequest(w, err.Error())
+		return
+	}
+	if body.GuestID == "" || body.GuestID == g.ID {
+		s.badRequest(w, "pilih tamu lain untuk diajak kenalan")
+		return
+	}
+	inv, err := s.store.AddKenalanInvite(r.Context(), g.ID, body.GuestID, rundownMinute(time.Now()), kenalanCooldown)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	inv.FromName = g.Name
+	s.writeJSON(w, http.StatusCreated, inv)
+}
+
+type kenalanInvitesResult struct {
+	Received []model.KenalanInvite `json:"received"`
+	Sent     []model.KenalanInvite `json:"sent"`
+}
+
+// handleKenalanInvites is this guest's invites: received, for Notifikasi,
+// and the latest one sent to each guest, for the "Ajak lagi" countdown.
+// Not cached: it differs per caller.
+func (s *Server) handleKenalanInvites(w http.ResponseWriter, r *http.Request) {
+	received, sent, err := s.store.KenalanInvites(r.Context(), guestOf(r).ID)
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	s.writeJSON(w, http.StatusOK, kenalanInvitesResult{Received: received, Sent: sent})
+}

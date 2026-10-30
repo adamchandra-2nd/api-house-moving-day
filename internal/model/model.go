@@ -171,6 +171,9 @@ type Guest struct {
 	Question string `json:"question"`
 	Outfit   string `json:"outfit"`
 	Code     string `json:"code"`
+	// SpriteAt is when their character picture was last uploaded, as Unix
+	// milliseconds; 0 means none yet. It versions the image URL.
+	SpriteAt int64 `json:"spriteAt,omitempty"`
 }
 
 // AdminGuest is the committee's view: everything, contact details included.
@@ -271,6 +274,18 @@ type Announcement struct {
 	Failed     bool    `json:"failed,omitempty"`
 	// Source is "panitia" or "mc": who announced it.
 	Source string `json:"source"`
+}
+
+// KenalanInvite is one guest letting another know they would like to meet.
+type KenalanInvite struct {
+	ID       string `json:"id"`
+	FromID   string `json:"fromId"`
+	FromName string `json:"fromName"`
+	ToID     string `json:"toId"`
+	// At is the rundown minute it was sent, like everything else on screen.
+	At int `json:"at"`
+	// SentAt is Unix milliseconds, for the sender's "Ajak lagi" countdown.
+	SentAt int64 `json:"sentAt"`
 }
 
 // Card is a kenalan card one guest collected from another.

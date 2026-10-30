@@ -46,6 +46,10 @@ func (s *Server) Routes() http.Handler {
 	// ---- guest reads ----
 
 	mux.Handle("GET /api/guests", guest(s.handleGuests))
+	mux.Handle("GET /api/guests/{id}/sprite", guest(s.handleSprite))
+	mux.Handle("PUT /api/invite/sprite", guest(s.handleSetSprite))
+	mux.Handle("GET /api/kenalan/invites", guest(s.handleKenalanInvites))
+	mux.Handle("POST /api/kenalan/invites", guest(s.handleKenalanInvite))
 	mux.Handle("GET /api/agenda", guest(s.handleAgenda))
 	mux.Handle("GET /api/announcements", guest(s.handleAnnouncements))
 	mux.Handle("GET /api/people", guest(s.handlePeople))
@@ -93,6 +97,7 @@ func (s *Server) Routes() http.Handler {
 	mux.Handle("GET /api/admin/announcements", admin(s.handleAdminAnnouncements))
 	mux.Handle("POST /api/admin/announcements", admin(s.handleAddAnnouncement))
 	mux.Handle("POST /api/admin/announcements/{id}/resend", admin(s.handleResendAnnouncement))
+	mux.Handle("DELETE /api/admin/announcements/{id}", admin(s.handleDeleteAnnouncement))
 	mux.Handle("GET /api/admin/people", admin(s.handleAdminPeople))
 	mux.Handle("POST /api/admin/people", admin(s.handleSavePerson))
 	mux.Handle("PUT /api/admin/people/{id}", admin(s.handleSavePerson))

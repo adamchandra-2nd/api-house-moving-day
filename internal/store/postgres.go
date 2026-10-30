@@ -149,7 +149,8 @@ func scanAdminGuest(row pgx.Row) (model.AdminGuest, error) {
 
 func (p *Postgres) PresentGuests(ctx context.Context) ([]model.Guest, error) {
 	rows, err := p.pool.Query(ctx, `
-		select id, name, role, question, outfit, code
+		select id, name, role, question, outfit, code,
+			coalesce((extract(epoch from sprite_at) * 1000)::bigint, 0)
 		from guests
 		where hadir
 		order by created_at, id`)
@@ -161,12 +162,33 @@ func (p *Postgres) PresentGuests(ctx context.Context) ([]model.Guest, error) {
 	out := []model.Guest{} // never nil: an empty list is [] on the wire, not null
 	for rows.Next() {
 		var g model.Guest
-		if err := rows.Scan(&g.ID, &g.Name, &g.Role, &g.Question, &g.Outfit, &g.Code); err != nil {
+		if err := rows.Scan(&g.ID, &g.Name, &g.Role, &g.Question, &g.Outfit, &g.Code, &g.SpriteAt); err != nil {
 			return nil, wrap(err)
 		}
 		out = append(out, g)
 	}
 	return out, wrap(rows.Err())
+}
+
+func (p *Postgres) SetSprite(ctx context.Context, guestID string, raw []byte, mime string) error {
+	tag, err := p.pool.Exec(ctx, `
+		update guests set sprite = $2, sprite_mime = $3, sprite_at = now() where id = $1`,
+		guestID, raw, mime)
+	if err != nil {
+		return wrap(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (p *Postgres) Sprite(ctx context.Context, guestID string) ([]byte, string, error) {
+	var raw []byte
+	var mime string
+	err := p.pool.QueryRow(ctx, `
+		select sprite, sprite_mime from guests where id = $1 and sprite is not null`, guestID).Scan(&raw, &mime)
+	return raw, mime, wrap(err)
 }
 
 func (p *Postgres) AdminGuests(ctx context.Context) ([]model.AdminGuest, error) {
@@ -641,6 +663,83 @@ func (p *Postgres) AddAnnouncement(ctx context.Context, a model.Announcement) (m
 		a.ID, a.Title, a.Body, a.RoomID, a.At, a.Recipients, a.Source,
 	).Scan(&a.ID, &a.Title, &a.Body, &a.RoomID, &a.At, &a.Recipients, &a.Read, &a.Failed, &a.Source)
 	return a, wrap(err)
+}
+
+func (p *Postgres) DeleteAnnouncement(ctx context.Context, id string) error {
+	tag, err := p.pool.Exec(ctx, `delete from announcements where id = $1`, id)
+	if err != nil {
+		return wrap(err)
+	}
+	if tag.RowsAffected() == 0 {
+		return ErrNotFound
+	}
+	return nil
+}
+
+func (p *Postgres) AddKenalanInvite(ctx context.Context, fromID, toID string, minute int, cooldown time.Duration) (model.KenalanInvite, error) {
+	inv := model.KenalanInvite{ID: newID("k"), FromID: fromID, ToID: toID, At: minute}
+	var present bool
+	if err := p.pool.QueryRow(ctx, `select hadir from guests where id = $1`, toID).Scan(&present); err != nil {
+		return inv, wrap(err)
+	}
+	if !present {
+		return inv, ErrNotFound
+	}
+	// One statement, so two taps racing cannot both slip under the cooldown.
+	var sentAt time.Time
+	err := p.pool.QueryRow(ctx, `
+		insert into kenalan_invites (id, from_id, to_id, at_min)
+		select $1, $2, $3, $4
+		where not exists (
+			select 1 from kenalan_invites
+			where from_id = $2 and to_id = $3 and created_at > now() - make_interval(secs => $5)
+		)
+		returning created_at`,
+		inv.ID, fromID, toID, minute, cooldown.Seconds()).Scan(&sentAt)
+	if errors.Is(wrap(err), ErrNotFound) {
+		return inv, fmt.Errorf("%w: kamu baru saja mengajaknya, coba lagi nanti", ErrConflict)
+	}
+	if err != nil {
+		return inv, wrap(err)
+	}
+	inv.SentAt = sentAt.UnixMilli()
+	return inv, nil
+}
+
+func (p *Postgres) KenalanInvites(ctx context.Context, guestID string) ([]model.KenalanInvite, []model.KenalanInvite, error) {
+	scan := func(sql string) ([]model.KenalanInvite, error) {
+		rows, err := p.pool.Query(ctx, sql, guestID)
+		if err != nil {
+			return nil, wrap(err)
+		}
+		defer rows.Close()
+		out := []model.KenalanInvite{}
+		for rows.Next() {
+			var k model.KenalanInvite
+			var at time.Time
+			if err := rows.Scan(&k.ID, &k.FromID, &k.FromName, &k.ToID, &k.At, &at); err != nil {
+				return nil, wrap(err)
+			}
+			k.SentAt = at.UnixMilli()
+			out = append(out, k)
+		}
+		return out, wrap(rows.Err())
+	}
+	received, err := scan(`
+		select k.id, k.from_id, g.name, k.to_id, k.at_min, k.created_at
+		from kenalan_invites k join guests g on g.id = k.from_id
+		where k.to_id = $1
+		order by k.created_at desc
+		limit 50`)
+	if err != nil {
+		return nil, nil, err
+	}
+	sent, err := scan(`
+		select distinct on (k.to_id) k.id, k.from_id, g.name, k.to_id, k.at_min, k.created_at
+		from kenalan_invites k join guests g on g.id = k.from_id
+		where k.from_id = $1
+		order by k.to_id, k.created_at desc`)
+	return received, sent, err
 }
 
 func (p *Postgres) ResendAnnouncement(ctx context.Context, id string, minute int) (model.Announcement, error) {
