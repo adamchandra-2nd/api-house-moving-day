@@ -98,10 +98,29 @@ func (s *Server) handleAdminAnnouncements(w http.ResponseWriter, r *http.Request
 	})
 }
 
+// adminPerson is a Person as the committee sees it: with the code they send
+// along with the personal link.
+type adminPerson struct {
+	model.Person
+	StageCode string `json:"stageCode"`
+}
+
+func withCode(p model.Person) adminPerson { return adminPerson{Person: p, StageCode: p.StageCode} }
+
+// handleAdminPeople is not cached: keyPeople is the guests' copy, and a list
+// with everyone's code in it must never be what that key holds.
 func (s *Server) handleAdminPeople(w http.ResponseWriter, r *http.Request) {
-	s.cachedJSON(w, r, keyPeople, s.cfg.CacheTTL, func(ctx context.Context) (any, error) {
-		return s.store.People(ctx)
-	})
+	people, err := s.store.People(r.Context())
+	if err != nil {
+		s.fail(w, r, err)
+		return
+	}
+	out := make([]adminPerson, 0, len(people))
+	for _, p := range people {
+		out = append(out, withCode(p))
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	s.writeJSON(w, http.StatusOK, out)
 }
 
 type personBody struct {
@@ -147,7 +166,7 @@ func (s *Server) handleSavePerson(w http.ResponseWriter, r *http.Request) {
 	if p.ID == "" {
 		status = http.StatusCreated
 	}
-	s.writeJSON(w, status, saved)
+	s.writeJSON(w, status, withCode(saved))
 }
 
 func (s *Server) handleDeletePerson(w http.ResponseWriter, r *http.Request) {
@@ -170,18 +189,6 @@ func (s *Server) handleInvitePerson(w http.ResponseWriter, r *http.Request) {
 	}
 	s.invalidate(r.Context(), keyPeople)
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// handleStageCode tells the committee the code MC and speakers sign in with.
-//
-// Nothing sends it for them: the committee passes it on by WhatsApp, in a
-// message of its own after the link. Until now it lived only in STAGE_CODE,
-// so the admin had no way to see what to send.
-func (s *Server) handleStageCode(w http.ResponseWriter, r *http.Request) {
-	w.Header().Set("Cache-Control", "no-store")
-	s.writeJSON(w, http.StatusOK, struct {
-		Code string `json:"code"`
-	}{s.cfg.StageCode})
 }
 
 // handleRevokePerson (DELETE) turns a personal link off; POST turns it back

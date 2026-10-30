@@ -870,13 +870,16 @@ func (m *Memory) SavePerson(ctx context.Context, p model.Person) (model.Person, 
 	if p.ID == "" {
 		p.ID = newID("p")
 		p.Access = "belum"
+		p.StageCode = NewStageCode()
 		m.people = append(m.people, p)
 		return p, nil
 	}
 	for i := range m.people {
 		if m.people[i].ID == p.ID {
-			// Access is the store's to derive, never the caller's to set.
+			// Access is the store's to derive, never the caller's to set,
+			// and the code stays what it was.
 			p.Access = m.people[i].Access
+			p.StageCode = m.people[i].StageCode
 			m.people[i] = p
 			return p, nil
 		}

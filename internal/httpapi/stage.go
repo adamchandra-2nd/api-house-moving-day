@@ -2,6 +2,7 @@ package httpapi
 
 import (
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -74,7 +75,11 @@ type stageLoginResult struct {
 	Person model.Person `json:"person"`
 }
 
-// handleStageLogin exchanges the shared stage code for a signed session.
+// handleStageLogin exchanges a person's own stage code for a signed session.
+//
+// Each MC and speaker has a code of their own (people.stage_code), sent with
+// their personal link. It replaced one STAGE_CODE shared by everybody, which
+// sat in the server's environment and changed only with a deploy.
 //
 // Rate limited per IP, because this is a six-digit code typed on a phone: it
 // is short enough to guess if guessing were free.
@@ -89,11 +94,6 @@ func (s *Server) handleStageLogin(w http.ResponseWriter, r *http.Request) {
 		s.badRequest(w, err.Error())
 		return
 	}
-	if body.Code != s.cfg.StageCode {
-		s.writeJSON(w, http.StatusForbidden, errBody{Error: "kode salah", Code: "bad_code"})
-		return
-	}
-
 	people, err := s.store.People(r.Context())
 	if err != nil {
 		s.fail(w, r, err)
@@ -108,6 +108,12 @@ func (s *Server) handleStageLogin(w http.ResponseWriter, r *http.Request) {
 	}
 	if who.ID == "" {
 		s.badRequest(w, "personId tidak dikenal")
+		return
+	}
+	// Constant time, and never against an empty code: someone added before
+	// migration 010 ran has none, and "" must not let an empty guess in.
+	if who.StageCode == "" || subtle.ConstantTimeCompare([]byte(body.Code), []byte(who.StageCode)) != 1 {
+		s.writeJSON(w, http.StatusForbidden, errBody{Error: "kode salah", Code: "bad_code"})
 		return
 	}
 	if who.Access == "dicabut" {

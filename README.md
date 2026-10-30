@@ -449,8 +449,9 @@ Honest list of what is deliberately not finished:
   an approved template and a paid number, so this hands back `wa.me` links the
   committee taps instead. The guest-facing half — a unique link, resolved
   server-side, landing on the RSVP screen — is complete and real.
-- **Codes are shared secrets in env vars** (`STAGE_CODE`, `DOOR_CODE`,
-  `PANITIA_PIN`, `ADMIN_PIN`). Fine for one event day, rate limited, and all
+- **Codes are shared secrets in env vars** (`DOOR_CODE`, `PANITIA_PIN`,
+  `ADMIN_PIN`). MC and speakers each have their own code in
+  `people.stage_code` (migration 010), sent with their personal link. Fine for one event day, rate limited, and all
   of them must change before anything real.
 - **No `read_count` on announcements yet.** The column exists; nothing reports
   reads.
